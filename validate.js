@@ -14,7 +14,7 @@
 
     var defaults = {
         messages: {
-            required: 'The %s field is required.',
+            required: '%s不能为空',
             matches: 'The %s field does not match the %s field.',
             "default": 'The %s field is still set to default, please change.',
             valid_email: 'The %s field must contain a valid email address.',
@@ -40,7 +40,8 @@
             greater_than_date: 'The %s field must contain a more recent date than %s.',
             less_than_date: 'The %s field must contain an older date than %s.',
             greater_than_or_equal_date: 'The %s field must contain a date that\'s at least as recent as %s.',
-            less_than_or_equal_date: 'The %s field must contain a date that\'s %s or older.'
+            less_than_or_equal_date: 'The %s field must contain a date that\'s %s or older.',
+            is_tel: '电话号码格式不正确'
         },
         callback: function(errors) {
 
@@ -64,6 +65,7 @@
         ipRegex = /^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[0-9]{1,2})\.){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[0-9]{1,2})$/i,
         base64Regex = /[^a-zA-Z0-9\/\+=]/i,
         numericDashRegex = /^[\d\-\s]+$/,
+        telRegex = /^\d{11}|(\d{3,4}-?\d+)$/,
         urlRegex = /^((http|https):\/\/(\w+:{0,1}\w*@)?(\S+)|)(:[0-9]+)?(\/|\/([\w#!:.?+=&%@!\-\/]))?$/,
         dateRegex = /\d{4}-\d{1,2}-\d{1,2}/;
 
@@ -94,7 +96,7 @@
             var field = fields[i];
 
             // If passed in incorrectly, we need to skip the field.
-            if ((!field.name && !field.names) || !field.rules) {
+            if ((!field.name && !field.names)) {
                 console.warn('validate.js: The following field is being skipped due to a misconfiguration:');
                 console.warn(field);
                 console.warn('Check to ensure you have properly configured a name and rules for this field');
@@ -135,14 +137,14 @@
         if ((element.length > 0) && (element[0].type === 'radio' || element[0].type === 'checkbox')) {
             for (i = 0, elementLength = element.length; i < elementLength; i++) {
                 if (element[i].checked) {
-                    return element[i][attributeName];
+                    return element[i][attributeName] || element[i].getAttribute(attributeName);
                 }
             }
 
             return;
         }
 
-        return element[attributeName];
+        return element[attributeName] || element.getAttribute(attributeName);
     };
 
     /*
@@ -191,7 +193,8 @@
      */
 
     FormValidator.prototype._formByNameOrNode = function(formNameOrNode) {
-        return (typeof formNameOrNode === 'object') ? formNameOrNode : document.forms[formNameOrNode];
+        return (typeof formNameOrNode === 'object') ? formNameOrNode :
+        	(document.getElementById(formNameOrNode) ? document.getElementById(formNameOrNode): document.forms[formNameOrNode]);
     };
 
     /*
@@ -202,7 +205,7 @@
     FormValidator.prototype._addField = function(field, nameValue)  {
         this.fields[nameValue] = {
             name: nameValue,
-            display: field.display || nameValue,
+            display: field.display,
             rules: field.rules,
             depends: field.depends,
             id: null,
@@ -220,31 +223,41 @@
 
     FormValidator.prototype._validateForm = function(evt) {
         this.errors = [];
-
         for (var key in this.fields) {
             if (this.fields.hasOwnProperty(key)) {
                 var field = this.fields[key] || {},
                     element = this.form[field.name];
-
                 if (element && element !== undefined) {
                     field.id = attributeValue(element, 'id');
                     field.element = element;
                     field.type = (element.length > 0) ? element[0].type : element.type;
                     field.value = attributeValue(element, 'value');
                     field.checked = attributeValue(element, 'checked');
-
+                    field.message = attributeValue(element, 'msg');
+                    field.display = field.display ? field.display : attributeValue(element, 'display');
+                    field.rules = field.rules ? field.rules : attributeValue(element, 'rules');
+                    field.depends = field.depends ? field.depends : attributeValue(element, 'depends');
                     /*
                      * Run through the rules for each field.
                      * If the field has a depends conditional, only validate the field
                      * if it passes the custom function
                      */
-
                     if (field.depends && typeof field.depends === "function") {
                         if (field.depends.call(this, field)) {
                             this._validateField(field);
                         }
                     } else if (field.depends && typeof field.depends === "string" && this.conditionals[field.depends]) {
                         if (this.conditionals[field.depends].call(this,field)) {
+                            this._validateField(field);
+                        }
+                    } else if (field.depends && typeof field.depends === "string") { 
+                    	/*
+                    	 * depends是字符时，尝试用已有规则验证
+                    	 * */
+                    	var tempRules = field.rules;
+                    	field.rules = field.depends;
+                        if (this._validateField(field) === false){
+                        	field.rules = tempRules;
                             this._validateField(field);
                         }
                     } else {
@@ -349,13 +362,13 @@
                     }
                 }
 
-                var existingError;
+                var existingError = null;
                 for (j = 0; j < this.errors.length; j += 1) {
-                    if (field.id === this.errors[j].id) {
+                    if (field.id && field.id === this.errors[j].id) {
                         existingError = this.errors[j];
                     }
                 }
-
+                message = field.message || message;
                 var errorObject = existingError || {
                     id: field.id,
                     display: field.display,
@@ -368,6 +381,7 @@
                 errorObject.messages.push(message);
                 if (!existingError) this.errors.push(errorObject);
             }
+            return failed;
         }
     };
 
@@ -596,7 +610,9 @@
 
             return enteredDate >= validDate;
         },
-
+        is_tel: function (field) {
+            return  (telRegex.test(field.value));
+        },
         less_than_or_equal_date: function (field, date) {
             var enteredDate = this._getValidDate(field.value),
                 validDate = this._getValidDate(date);
@@ -612,9 +628,32 @@
     window.FormValidator = FormValidator;
 })(window, document);
 
-/*
- * Export as a CommonJS module
- */
-if (typeof module !== 'undefined' && module.exports) {
-    module.exports = FormValidator;
+if(typeof(swal) === "undefined"){
+	var swal = alert;
 }
+/**
+ * 表单验证，使用validate.js与sweet-alert.min.js结合使用
+ * */
+var validateForm = function(id){
+	//find element
+	var fields = [];
+	var formElement = document.getElementById(id);
+	var result = true;
+	for(var i = 0, len = formElement.length; i < len; i++){
+		var element = formElement[i];
+		if(element.getAttribute("rules")){
+			fields.push({name:element.getAttribute("name")});
+		}
+	}
+	new FormValidator(id, fields, function(errors, event) {
+	    if (errors.length > 0) {
+	    	var message = [];
+	        for(var i = 0; i<errors.length; i++){
+	        	message.push(errors[i].message);
+	        }
+	        swal(message.join("\n"));
+	        result = false;
+	    }
+	})._validateForm();
+	return result;
+};
